@@ -160,8 +160,8 @@ module fifo_singleport #(
     // Main FIFO logic
     // ------------------------------------------------------------------------
 
-    assign push    = wr_en_i && (~full_o || rd_en_i);
-    assign pop     = rd_en_i && ~empty_o;
+    assign push    = wr_en_i;
+    assign pop     = rd_en_i;
 
     assign empty_o = cnt == CNT_W'(0);
     assign full_o  = cnt == CNT_MAX;
