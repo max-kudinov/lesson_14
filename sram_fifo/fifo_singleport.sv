@@ -16,50 +16,54 @@ module fifo_singleport #(
     // Local parameters
     // ------------------------------------------------------------------------
 
-    localparam N_BANKS    = 2;
-    localparam BUF_DEPTH  = 2;
+    localparam N_BANKS      = 2;
+    localparam BUF_DEPTH    = 2;
 
-    localparam CNT_MAX    = DEPTH;
-    localparam CNT_W      = $clog2(CNT_MAX + 1);
+    localparam CNT_MAX      = DEPTH;
+    localparam CNT_W        = $clog2(CNT_MAX + 1);
+    localparam CREDIT_CNT_W = $clog2(BUF_DEPTH + 1);
 
-    localparam BANK_DEPTH = DEPTH / 2;
-    localparam PTR_W      = $clog2(BANK_DEPTH);
-    localparam PTR_MAX    = PTR_W'(BANK_DEPTH - 1);
+    localparam BANK_DEPTH   = DEPTH / 2;
+    localparam PTR_W        = $clog2(BANK_DEPTH);
+    localparam PTR_MAX      = PTR_W'(BANK_DEPTH - 1);
 
     // ------------------------------------------------------------------------
     // Local signals
     // ------------------------------------------------------------------------
 
     // FIFO control
-    logic               push;
-    logic               pop;
+    logic                    push;
+    logic                    pop;
 
     // SRAM
-    logic [  PTR_W-1:0] wr_ptr   [N_BANKS];
-    logic [  PTR_W-1:0] rd_ptr   [N_BANKS];
-    logic [  PTR_W-1:0] addr     [N_BANKS];
-    logic [N_BANKS-1:0] wen;
-    logic [N_BANKS-1:0] ren;
-    logic [  WIDTH-1:0] sram_out [N_BANKS];
-    logic [N_BANKS-1:0] sram_out_vld;
-    logic [N_BANKS-1:0] bypass;
-    logic [N_BANKS-1:0] sram_empty;
+    logic [  PTR_W-1:0]      wr_ptr      [N_BANKS];
+    logic [  PTR_W-1:0]      rd_ptr      [N_BANKS];
+    logic [  PTR_W-1:0]      addr        [N_BANKS];
+    logic [N_BANKS-1:0]      wen;
+    logic [N_BANKS-1:0]      ren;
+    logic [  WIDTH-1:0]      sram_out    [N_BANKS];
+    logic [N_BANKS-1:0]      sram_out_vld;
+    logic [N_BANKS-1:0]      bypass;
+    logic [N_BANKS-1:0]      sram_empty;
+
+    // Credit counter
+    logic [CREDIT_CNT_W-1:0] credit_cnt  [N_BANKS];
 
     // Buffers
-    logic [  WIDTH-1:0] buf_in  [N_BANKS];
-    logic [  WIDTH-1:0] buf_out [N_BANKS];
-    logic [N_BANKS-1:0] buf_wr_en;
-    logic [N_BANKS-1:0] buf_rd_en;
-    logic [N_BANKS-1:0] buf_full;
+    logic [  WIDTH-1:0]      buf_in      [N_BANKS];
+    logic [  WIDTH-1:0]      buf_out     [N_BANKS];
+    logic [N_BANKS-1:0]      buf_wr_en;
+    logic [N_BANKS-1:0]      buf_rd_en;
 
-    logic               wr_bank_select;
-    logic               rd_bank_select;
-    logic               wr_selected;
-    logic               rd_selected;
-    logic               buf_ready;
+    logic                    wr_bank_select;
+    logic                    rd_bank_select;
+    logic                    wr_selected;
+    logic                    rd_selected;
+    logic                    buf_ready;
+    logic [N_BANKS-1:0]      direct_write;
 
-    logic [CNT_W-1:0]   cnt;
-    logic               almost_empty;
+    logic [  CNT_W-1:0]      cnt;
+    logic                    almost_empty;
 
     // ------------------------------------------------------------------------
     // SRAM banks
@@ -91,8 +95,10 @@ module fifo_singleport #(
                 .rd_en_i ( buf_rd_en [i] ),
                 .data_i  ( buf_in    [i] ),
                 .data_o  ( buf_out   [i] ),
-                .full_o  ( buf_full  [i] ),
+
+                // We use credit counter to keep track of buffer space
                 // verilator lint_off PINCONNECTEMPTY
+                .full_o  (               ),
                 .empty_o (               )
                 // verilator lint_on PINCONNECTEMPTY
             );
@@ -107,22 +113,23 @@ module fifo_singleport #(
     always_comb begin
         for (int i = 0; i < 2; i++) begin
 
-            // Intermidiate variables
-            wr_selected    = wr_bank_select == 1'(i);
-            rd_selected    = rd_bank_select == 1'(i);
-            almost_empty   = cnt < (BUF_DEPTH * N_BANKS);
-            buf_ready      = ~buf_full[i] && ~sram_out_vld[i];
+            // Intermediate variables
+            wr_selected      = wr_bank_select == 1'(i);
+            rd_selected      = rd_bank_select == 1'(i);
+            almost_empty     = cnt < (BUF_DEPTH * N_BANKS);
+            buf_ready        = credit_cnt[i] != '0;
 
-            sram_empty [i] = (wr_ptr[i] == rd_ptr[i]) && almost_empty;
-            bypass     [i] = sram_empty[i] && buf_ready;
+            sram_empty   [i] = (wr_ptr[i] == rd_ptr[i]) && almost_empty;
+            bypass       [i] = sram_empty[i] && buf_ready;
+            direct_write [i] = bypass[i] && push && wr_selected;
 
-            wen        [i] = push && ~bypass[i] && wr_selected;
-            ren        [i] = ~sram_empty[i] && buf_ready && ~(push && wr_selected);
-            addr       [i] = wen[i] ? wr_ptr[i] : rd_ptr[i];
+            wen          [i] = push && ~bypass[i] && wr_selected;
+            ren          [i] = ~sram_empty[i] && buf_ready && ~(push && wr_selected);
+            addr         [i] = wen[i] ? wr_ptr[i] : rd_ptr[i];
 
-            buf_wr_en  [i] = (bypass[i] && push && wr_selected) || sram_out_vld[i];
-            buf_rd_en  [i] = pop && rd_selected;
-            buf_in     [i] = bypass[i] ? data_i : sram_out[i];
+            buf_wr_en    [i] = direct_write[i] || sram_out_vld[i];
+            buf_rd_en    [i] = pop && rd_selected;
+            buf_in       [i] = bypass[i] ? data_i : sram_out[i];
         end
 
         data_o = rd_bank_select ? buf_out[1] : buf_out[0];
@@ -152,6 +159,18 @@ module fifo_singleport #(
                 sram_out_vld[i] <= 1'b1;
             end else begin
                 sram_out_vld[i] <= 1'b0;
+            end
+        end
+    end
+
+    always_ff @(posedge clk_i) begin
+        for (int i = 0; i < 2; i++) begin
+            if (rst_i) begin
+                credit_cnt[i] <= BUF_DEPTH;
+            end else if ((ren[i] || direct_write[i]) && ~buf_rd_en[i]) begin
+                credit_cnt[i] <= credit_cnt[i] - 1'b1;
+            end else if (~(ren[i] || direct_write[i]) && buf_rd_en[i]) begin
+                credit_cnt[i] <= credit_cnt[i] + 1'b1;
             end
         end
     end
