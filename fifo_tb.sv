@@ -161,9 +161,9 @@ module fifo_tb();
     endtask
 
     task reset();
-        rst = 1;
+        rst <= 1;
         #CLK_PERIOD;
-        rst = 0;
+        rst <= 0;
     endtask
 
 endmodule
