@@ -31,7 +31,7 @@ module fifo_dff #(
 
     // Counter
     logic [W_CNT-1:0] cnt;
-    logic [W_CNT-1:0] cnt_nxt;
+    logic [W_CNT-1:0] cnt_next;
 
     // Pointers
     logic [W_PTR-1:0] wr_ptr;
@@ -55,12 +55,12 @@ module fifo_dff #(
     end
 
     always_comb begin
-        cnt_nxt = cnt;
+        cnt_next = cnt;
 
         if (push && !pop) begin
-            cnt_nxt = cnt + 1'b1;
+            cnt_next = cnt + 1'b1;
         end else if (pop && !push) begin
-            cnt_nxt = cnt - 1'b1;
+            cnt_next = cnt - 1'b1;
         end
     end
 
@@ -68,7 +68,7 @@ module fifo_dff #(
         if (rst_i) begin
             cnt <= '0;
         end else begin
-            cnt <= cnt_nxt;
+            cnt <= cnt_next;
         end
     end
 
@@ -78,18 +78,18 @@ module fifo_dff #(
             full_o        <= '0;
             almost_full_o <= '0;
         end else begin
-            empty_o       <= cnt_nxt == '0;
-            full_o        <= cnt_nxt == DEPTH;
-            almost_full_o <= cnt_nxt == DEPTH - 1;
+            empty_o       <= cnt_next == '0;
+            full_o        <= cnt_next == DEPTH;
+            almost_full_o <= cnt_next == DEPTH - 1;
         end
     end
 
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
-            wr_ptr        <= W_PTR'(0);
+            wr_ptr     <= W_PTR'(0);
         end else if (push) begin
             if (wr_ptr == MAX_PTR) begin
-                wr_ptr        <= W_PTR'(0);
+                wr_ptr <= W_PTR'(0);
             end else begin
                 wr_ptr <= wr_ptr + 1'b1;
             end
@@ -98,10 +98,10 @@ module fifo_dff #(
 
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
-            rd_ptr        <= W_PTR'(0);
+            rd_ptr     <= W_PTR'(0);
         end else if (pop) begin
             if (rd_ptr == MAX_PTR) begin
-                rd_ptr        <= W_PTR'(0);
+                rd_ptr <= W_PTR'(0);
             end else begin
                 rd_ptr <= rd_ptr + 1'b1;
             end

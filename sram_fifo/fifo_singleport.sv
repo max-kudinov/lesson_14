@@ -16,57 +16,57 @@ module fifo_singleport #(
     // Local parameters
     // ------------------------------------------------------------------------
 
-    localparam N_BANKS      = 2;
-    localparam BUF_DEPTH    = 2;
+    localparam N_BANKS    = 2;
+    localparam BUF_DEPTH  = 2;
 
-    localparam CNT_MAX      = DEPTH;
-    localparam CNT_W        = $clog2(CNT_MAX + 1);
+    localparam CNT_MAX    = DEPTH;
+    localparam CNT_W      = $clog2(CNT_MAX + 1);
 
-    localparam BANK_DEPTH   = DEPTH / 2;
-    localparam PTR_W        = $clog2(BANK_DEPTH);
-    localparam PTR_MAX      = PTR_W'(BANK_DEPTH - 1);
-    localparam BANK_CNT_W   = $clog2(BANK_DEPTH + 1);
+    localparam BANK_DEPTH = DEPTH / 2;
+    localparam PTR_W      = $clog2(BANK_DEPTH);
+    localparam PTR_MAX    = PTR_W'(BANK_DEPTH - 1);
+    localparam BANK_CNT_W = $clog2(BANK_DEPTH + 1);
 
     // ------------------------------------------------------------------------
     // Local signals
     // ------------------------------------------------------------------------
 
     // FIFO control
-    logic                    push;
-    logic                    pop;
+    logic                  push;
+    logic                  pop;
 
     // SRAM
-    logic [  PTR_W-1:0]      wr_ptr      [N_BANKS];
-    logic [  PTR_W-1:0]      rd_ptr      [N_BANKS];
+    logic [  PTR_W-1:0]    wr_ptr        [N_BANKS];
+    logic [  PTR_W-1:0]    rd_ptr        [N_BANKS];
 
-    logic [  PTR_W-1:0]      addr        [N_BANKS];
-    logic [N_BANKS-1:0]      wen;
-    logic [N_BANKS-1:0]      ren;
-    logic [  WIDTH-1:0]      sram_out    [N_BANKS];
+    logic [  PTR_W-1:0]    addr          [N_BANKS];
+    logic [N_BANKS-1:0]    wen;
+    logic [N_BANKS-1:0]    ren;
+    logic [  WIDTH-1:0]    sram_out      [N_BANKS];
 
-    logic [N_BANKS-1:0]      sram_out_vld;
-    logic [N_BANKS-1:0]      bypass;
-    logic [N_BANKS-1:0]      sram_empty;
+    logic [N_BANKS-1:0]    sram_out_vld;
+    logic [N_BANKS-1:0]    bypass;
+    logic [N_BANKS-1:0]    sram_empty;
 
     // Buffers
-    logic [  WIDTH-1:0]      buf_in      [N_BANKS];
-    logic [  WIDTH-1:0]      buf_out     [N_BANKS];
-    logic [N_BANKS-1:0]      buf_wr_en;
-    logic [N_BANKS-1:0]      buf_rd_en;
-    logic [N_BANKS-1:0]      buf_full;
-    logic [N_BANKS-1:0]      buf_almost_full;
+    logic [  WIDTH-1:0]    buf_in        [N_BANKS];
+    logic [  WIDTH-1:0]    buf_out       [N_BANKS];
+    logic [N_BANKS-1:0]    buf_wr_en;
+    logic [N_BANKS-1:0]    buf_rd_en;
+    logic [N_BANKS-1:0]    buf_full;
+    logic [N_BANKS-1:0]    buf_almost_full;
 
-    logic                    wr_bank_select;
-    logic                    rd_bank_select;
-    logic                    wr_selected;
-    logic                    rd_selected;
-    logic                    buf_ready;
-    logic [N_BANKS-1:0]      direct_write;
+    logic                  wr_bank_select;
+    logic                  rd_bank_select;
+    logic                  wr_selected;
+    logic                  rd_selected;
+    logic                  buf_ready;
+    logic [N_BANKS-1:0]    direct_write;
 
-    logic [     CNT_W-1:0]   elem_cnt;
-    logic [     CNT_W-1:0]   elem_cnt_next;
-    logic [BANK_CNT_W-1:0]   bank_cnt      [N_BANKS];
-    logic [BANK_CNT_W-1:0]   bank_cnt_next [N_BANKS];
+    logic [     CNT_W-1:0] elem_cnt;
+    logic [     CNT_W-1:0] elem_cnt_next;
+    logic [BANK_CNT_W-1:0] bank_cnt      [N_BANKS];
+    logic [BANK_CNT_W-1:0] bank_cnt_next [N_BANKS];
 
     // ------------------------------------------------------------------------
     // SRAM banks
@@ -123,8 +123,8 @@ module fifo_singleport #(
             bypass       [i] = sram_empty[i] && buf_ready;
             direct_write [i] = bypass[i] && push && wr_selected;
 
-            wen          [i] = push && ~bypass[i] && wr_selected;
-            ren          [i] = ~sram_empty[i] && buf_ready && ~(push && wr_selected);
+            wen          [i] = push && !bypass[i] && wr_selected;
+            ren          [i] = !sram_empty[i] && buf_ready && !(push && wr_selected);
             addr         [i] = wen[i] ? wr_ptr[i] : rd_ptr[i];
 
             buf_wr_en    [i] = direct_write[i] || sram_out_vld[i];
@@ -140,8 +140,8 @@ module fifo_singleport #(
             wr_bank_select <= 1'b0;
             rd_bank_select <= 1'b0;
         end else begin
-            if (push) wr_bank_select <= ~wr_bank_select;
-            if (pop ) rd_bank_select <= ~rd_bank_select;
+            if (push) wr_bank_select <= !wr_bank_select;
+            if (pop ) rd_bank_select <= !rd_bank_select;
         end
     end
 
@@ -225,9 +225,9 @@ module fifo_singleport #(
     always_comb begin
         elem_cnt_next = elem_cnt;
 
-        if (push && ~pop) begin
+        if (push && !pop) begin
             elem_cnt_next = elem_cnt + 1'b1;
-        end else if (pop && ~push) begin
+        end else if (pop && !push) begin
             elem_cnt_next = elem_cnt - 1'b1;
         end
     end
