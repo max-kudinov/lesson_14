@@ -21,11 +21,11 @@ module fifo_singleport #(
 
     localparam CNT_MAX      = DEPTH;
     localparam CNT_W        = $clog2(CNT_MAX + 1);
-    localparam CREDIT_CNT_W = $clog2(BUF_DEPTH + 1);
 
     localparam BANK_DEPTH   = DEPTH / 2;
     localparam PTR_W        = $clog2(BANK_DEPTH);
     localparam PTR_MAX      = PTR_W'(BANK_DEPTH - 1);
+    localparam BANK_CNT_W   = $clog2(BANK_DEPTH + 1);
 
     // ------------------------------------------------------------------------
     // Local signals
@@ -38,22 +38,23 @@ module fifo_singleport #(
     // SRAM
     logic [  PTR_W-1:0]      wr_ptr      [N_BANKS];
     logic [  PTR_W-1:0]      rd_ptr      [N_BANKS];
+
     logic [  PTR_W-1:0]      addr        [N_BANKS];
     logic [N_BANKS-1:0]      wen;
     logic [N_BANKS-1:0]      ren;
     logic [  WIDTH-1:0]      sram_out    [N_BANKS];
+
     logic [N_BANKS-1:0]      sram_out_vld;
     logic [N_BANKS-1:0]      bypass;
     logic [N_BANKS-1:0]      sram_empty;
-
-    // Credit counter
-    logic [CREDIT_CNT_W-1:0] credit_cnt  [N_BANKS];
 
     // Buffers
     logic [  WIDTH-1:0]      buf_in      [N_BANKS];
     logic [  WIDTH-1:0]      buf_out     [N_BANKS];
     logic [N_BANKS-1:0]      buf_wr_en;
     logic [N_BANKS-1:0]      buf_rd_en;
+    logic [N_BANKS-1:0]      buf_full;
+    logic [N_BANKS-1:0]      buf_almost_full;
 
     logic                    wr_bank_select;
     logic                    rd_bank_select;
@@ -62,8 +63,10 @@ module fifo_singleport #(
     logic                    buf_ready;
     logic [N_BANKS-1:0]      direct_write;
 
-    logic [  CNT_W-1:0]      cnt;
-    logic                    almost_empty;
+    logic [     CNT_W-1:0]   elem_cnt;
+    logic [     CNT_W-1:0]   elem_cnt_next;
+    logic [BANK_CNT_W-1:0]   bank_cnt      [N_BANKS];
+    logic [BANK_CNT_W-1:0]   bank_cnt_next [N_BANKS];
 
     // ------------------------------------------------------------------------
     // SRAM banks
@@ -89,17 +92,16 @@ module fifo_singleport #(
                 .WIDTH ( WIDTH     ),
                 .DEPTH ( BUF_DEPTH )
             ) i_buf (
-                .clk_i   ( clk_i         ),
-                .rst_i   ( rst_i         ),
-                .wr_en_i ( buf_wr_en [i] ),
-                .rd_en_i ( buf_rd_en [i] ),
-                .data_i  ( buf_in    [i] ),
-                .data_o  ( buf_out   [i] ),
-
-                // We use credit counter to keep track of buffer space
+                .clk_i         ( clk_i                ),
+                .rst_i         ( rst_i                ),
+                .wr_en_i       ( buf_wr_en        [i] ),
+                .rd_en_i       ( buf_rd_en        [i] ),
+                .data_i        ( buf_in           [i] ),
+                .data_o        ( buf_out          [i] ),
+                .full_o        ( buf_full         [i] ),
+                .almost_full_o ( buf_almost_full  [i] ),
                 // verilator lint_off PINCONNECTEMPTY
-                .full_o  (               ),
-                .empty_o (               )
+                .empty_o       (                      )
                 // verilator lint_on PINCONNECTEMPTY
             );
 
@@ -116,10 +118,8 @@ module fifo_singleport #(
             // Intermediate variables
             wr_selected      = wr_bank_select == 1'(i);
             rd_selected      = rd_bank_select == 1'(i);
-            almost_empty     = cnt < (BUF_DEPTH * N_BANKS);
-            buf_ready        = credit_cnt[i] != '0;
+            buf_ready        = !buf_full[i] && !(sram_out_vld[i] && buf_almost_full[i]);
 
-            sram_empty   [i] = (wr_ptr[i] == rd_ptr[i]) && almost_empty;
             bypass       [i] = sram_empty[i] && buf_ready;
             direct_write [i] = bypass[i] && push && wr_selected;
 
@@ -138,27 +138,21 @@ module fifo_singleport #(
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
             wr_bank_select <= 1'b0;
-        end else if (push) begin
-            wr_bank_select <= ~wr_bank_select;
-        end
-    end
-
-    always_ff @(posedge clk_i) begin
-        if (rst_i) begin
             rd_bank_select <= 1'b0;
-        end else if (pop) begin
-            rd_bank_select <= ~rd_bank_select;
+        end else begin
+            if (push) wr_bank_select <= ~wr_bank_select;
+            if (pop ) rd_bank_select <= ~rd_bank_select;
         end
     end
 
-    always_ff @(posedge clk_i) begin
+    always_comb begin
         for (int i = 0; i < 2; i++) begin
-            if (rst_i) begin
-                sram_out_vld[i] <= 1'b0;
-            end else if (ren[i]) begin
-                sram_out_vld[i] <= 1'b1;
-            end else begin
-                sram_out_vld[i] <= 1'b0;
+            bank_cnt_next[i] = bank_cnt[i];
+
+            if (wen[i] && !ren[i]) begin
+                bank_cnt_next[i] = bank_cnt[i] + 1'b1;
+            end else if (ren[i] && !wen[i]) begin
+                bank_cnt_next[i] = bank_cnt[i] - 1'b1;
             end
         end
     end
@@ -166,11 +160,29 @@ module fifo_singleport #(
     always_ff @(posedge clk_i) begin
         for (int i = 0; i < 2; i++) begin
             if (rst_i) begin
-                credit_cnt[i] <= BUF_DEPTH;
-            end else if ((ren[i] || direct_write[i]) && ~buf_rd_en[i]) begin
-                credit_cnt[i] <= credit_cnt[i] - 1'b1;
-            end else if (~(ren[i] || direct_write[i]) && buf_rd_en[i]) begin
-                credit_cnt[i] <= credit_cnt[i] + 1'b1;
+                bank_cnt[i] <= '0;
+            end else begin
+                bank_cnt[i] <= bank_cnt_next[i];
+            end
+        end
+    end
+
+    always_ff @(posedge clk_i) begin
+        for (int i = 0; i < 2; i++) begin
+            if (rst_i) begin
+                sram_empty[i] <= '1;
+            end else begin
+                sram_empty[i] <= bank_cnt_next[i] == '0;
+            end
+        end
+    end
+
+    always_ff @(posedge clk_i) begin
+        for (int i = 0; i < 2; i++) begin
+            if (rst_i) begin
+                sram_out_vld[i] <= 1'b0;
+            end else begin
+                sram_out_vld[i] <= ren[i];
             end
         end
     end
@@ -179,11 +191,8 @@ module fifo_singleport #(
     // Main FIFO logic
     // ------------------------------------------------------------------------
 
-    assign push    = wr_en_i;
-    assign pop     = rd_en_i;
-
-    assign empty_o = cnt == CNT_W'(0);
-    assign full_o  = cnt == CNT_MAX;
+    assign push = wr_en_i;
+    assign pop  = rd_en_i;
 
     always_ff @(posedge clk_i) begin
         for (int i = 0; i < 2; i++) begin
@@ -213,13 +222,31 @@ module fifo_singleport #(
         end
     end
 
+    always_comb begin
+        elem_cnt_next = elem_cnt;
+
+        if (push && ~pop) begin
+            elem_cnt_next = elem_cnt + 1'b1;
+        end else if (pop && ~push) begin
+            elem_cnt_next = elem_cnt - 1'b1;
+        end
+    end
+
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
-            cnt <= CNT_W'(0);
-        end else if (push && ~pop) begin
-            cnt <= cnt + 1'b1;
-        end else if (pop && ~push) begin
-            cnt <= cnt - 1'b1;
+            elem_cnt <= '0;
+        end else begin
+            elem_cnt <= elem_cnt_next;
+        end
+    end
+
+    always_ff @(posedge clk_i) begin
+        if (rst_i) begin
+            empty_o <= '1;
+            full_o  <= '0;
+        end else begin
+            empty_o <= elem_cnt_next == '0;
+            full_o  <= elem_cnt_next == DEPTH;
         end
     end
 

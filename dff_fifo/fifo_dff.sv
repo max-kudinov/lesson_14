@@ -9,13 +9,15 @@ module fifo_dff #(
     input  logic [WIDTH-1:0] data_i,
     output logic [WIDTH-1:0] data_o,
     output logic             empty_o,
-    output logic             full_o
+    output logic             full_o,
+    output logic             almost_full_o
 );
 
     // ------------------------------------------------------------------------
     // Local parameters
     // ------------------------------------------------------------------------
 
+    localparam W_CNT   = $clog2(DEPTH + 1);
     localparam W_PTR   = $clog2(DEPTH);
     localparam MAX_PTR = W_PTR'(DEPTH - 1);
 
@@ -27,11 +29,13 @@ module fifo_dff #(
     logic             push;
     logic             pop;
 
+    // Counter
+    logic [W_CNT-1:0] cnt;
+    logic [W_CNT-1:0] cnt_nxt;
+
     // Pointers
     logic [W_PTR-1:0] wr_ptr;
     logic [W_PTR-1:0] rd_ptr;
-    logic             wr_circle_odd;
-    logic             rd_circle_odd;
 
     logic [WIDTH-1:0] mem [DEPTH];
 
@@ -39,13 +43,10 @@ module fifo_dff #(
     // Main FIFO logic
     // ------------------------------------------------------------------------
 
-    assign push    = wr_en_i;
-    assign pop     = rd_en_i;
+    assign push   = wr_en_i;
+    assign pop    = rd_en_i;
 
-    assign empty_o = (wr_ptr == rd_ptr) && (wr_circle_odd == rd_circle_odd);
-    assign full_o  = (wr_ptr == rd_ptr) && (wr_circle_odd != rd_circle_odd);
-
-    assign data_o  = mem[rd_ptr];
+    assign data_o = mem[rd_ptr];
 
     always_ff @(posedge clk_i) begin
         if (push) begin
@@ -53,14 +54,42 @@ module fifo_dff #(
         end
     end
 
+    always_comb begin
+        cnt_nxt = cnt;
+
+        if (push && !pop) begin
+            cnt_nxt = cnt + 1'b1;
+        end else if (pop && !push) begin
+            cnt_nxt = cnt - 1'b1;
+        end
+    end
+
+    always_ff @(posedge clk_i) begin
+        if (rst_i) begin
+            cnt <= '0;
+        end else begin
+            cnt <= cnt_nxt;
+        end
+    end
+
+    always_ff @(posedge clk_i) begin
+        if (rst_i) begin
+            empty_o       <= '1;
+            full_o        <= '0;
+            almost_full_o <= '0;
+        end else begin
+            empty_o       <= cnt_nxt == '0;
+            full_o        <= cnt_nxt == DEPTH;
+            almost_full_o <= cnt_nxt == DEPTH - 1;
+        end
+    end
+
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
             wr_ptr        <= W_PTR'(0);
-            wr_circle_odd <= 1'b0;
         end else if (push) begin
             if (wr_ptr == MAX_PTR) begin
                 wr_ptr        <= W_PTR'(0);
-                wr_circle_odd <= ~wr_circle_odd;
             end else begin
                 wr_ptr <= wr_ptr + 1'b1;
             end
@@ -70,11 +99,9 @@ module fifo_dff #(
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
             rd_ptr        <= W_PTR'(0);
-            rd_circle_odd <= 1'b0;
         end else if (pop) begin
             if (rd_ptr == MAX_PTR) begin
                 rd_ptr        <= W_PTR'(0);
-                rd_circle_odd <= ~rd_circle_odd;
             end else begin
                 rd_ptr <= rd_ptr + 1'b1;
             end
