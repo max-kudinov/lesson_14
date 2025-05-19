@@ -1,7 +1,7 @@
 module fifo_tb();
     localparam CLK_PERIOD     = 10;
-    localparam W_FIFO         = 8;
-    localparam D_FIFO         = 8;
+    localparam W_FIFO         = 10;
+    localparam D_FIFO         = 15;
     localparam PUSH_DELAY_MIN = 0;
     localparam PUSH_DELAY_MAX = 10;
     localparam POP_DELAY_MIN  = 0;
