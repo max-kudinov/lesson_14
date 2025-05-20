@@ -17,6 +17,7 @@ module fifo_dualport #(
     // ------------------------------------------------------------------------
 
     localparam W_PTR   = $clog2(DEPTH);
+    localparam W_CNT   = $clog2(DEPTH + 1);
     localparam MAX_PTR = W_PTR'(DEPTH - 1);
 
     // ------------------------------------------------------------------------
@@ -26,6 +27,8 @@ module fifo_dualport #(
     // FIFO control
     logic             push;
     logic             pop;
+    logic [W_CNT-1:0] elem_cnt_next;
+    logic [W_CNT-1:0] elem_cnt;
 
     // SRAM
     logic             ren;
@@ -35,8 +38,6 @@ module fifo_dualport #(
     // Pointers
     logic [W_PTR-1:0] wr_ptr;
     logic [W_PTR-1:0] rd_ptr;
-    logic             wr_circle_odd;
-    logic             rd_circle_odd;
 
     // Prefetch and bypass
     logic             enable_bypass;
@@ -51,9 +52,9 @@ module fifo_dualport #(
 
     // Don't read from memory when almost empty, because the last element
     // has been already prefetched and its value is present on output
-    assign ren = pop && ~almost_empty;
+    assign ren = pop && !almost_empty;
     // Don't write to memory when we write to the bypass register
-    assign wen = push && ~enable_bypass;
+    assign wen = push && !enable_bypass;
 
     sram_dualport #(
         .WIDTH ( WIDTH ),
@@ -74,8 +75,7 @@ module fifo_dualport #(
 
     // Fetch next element on read, that way it would appear on output before
     // read enable signal (show-ahead)
-    assign prefetch_ptr = (rd_ptr == MAX_PTR) ? W_PTR'(0) : W_PTR'(rd_ptr + 1'b1);
-    assign almost_empty = wr_ptr == prefetch_ptr;
+    assign prefetch_ptr = (rd_ptr == MAX_PTR) ? '0 : W_PTR'(rd_ptr + 1'b1);
 
     // Write to bypass register if the FIFO is empty or it has only 1 element
     // (almost empty) and we do push and pop simultaneously (basically
@@ -102,40 +102,55 @@ module fifo_dualport #(
     // Main FIFO logic
     // ------------------------------------------------------------------------
 
-    assign push    = wr_en_i;
-    assign pop     = rd_en_i;
-
-    assign empty_o = (wr_ptr == rd_ptr) && (wr_circle_odd == rd_circle_odd);
-    assign full_o  = (wr_ptr == rd_ptr) && (wr_circle_odd != rd_circle_odd);
+    assign push   = wr_en_i;
+    assign pop    = rd_en_i;
 
     // Hide memory latency by choosing between SRAM and register
-    assign data_o  = bypass_valid ? bypass_data : sram_out;
+    assign data_o = bypass_valid ? bypass_data : sram_out;
 
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
-            wr_ptr        <= W_PTR'(0);
-            wr_circle_odd <= 1'b0;
+            wr_ptr <= '0;
         end else if (push) begin
-            if (wr_ptr == MAX_PTR) begin
-                wr_ptr        <= W_PTR'(0);
-                wr_circle_odd <= ~wr_circle_odd;
-            end else begin
-                wr_ptr <= wr_ptr + 1'b1;
-            end
+            wr_ptr <= (wr_ptr == MAX_PTR) ? '0 : wr_ptr + 1'b1;
         end
     end
 
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
-            rd_ptr        <= W_PTR'(0);
-            rd_circle_odd <= 1'b0;
+            rd_ptr <= '0;
         end else if (pop) begin
-            if (rd_ptr == MAX_PTR) begin
-                rd_ptr        <= W_PTR'(0);
-                rd_circle_odd <= ~rd_circle_odd;
-            end else begin
-                rd_ptr <= rd_ptr + 1'b1;
-            end
+            rd_ptr <= (rd_ptr == MAX_PTR) ? '0 : rd_ptr + 1'b1;
+        end
+    end
+
+    always_comb begin
+        elem_cnt_next = elem_cnt;
+
+        if (push && !pop) begin
+            elem_cnt_next = elem_cnt + 1'b1;
+        end else if (pop && !push) begin
+            elem_cnt_next = elem_cnt - 1'b1;
+        end
+    end
+
+    always_ff @(posedge clk_i) begin
+        if (rst_i) begin
+            elem_cnt <= '0;
+        end else begin
+            elem_cnt <= elem_cnt_next;
+        end
+    end
+
+    always_ff @(posedge clk_i) begin
+        if (rst_i) begin
+            full_o       <= '0;
+            empty_o      <= '1;
+            almost_empty <= '0;
+        end else begin
+            full_o       <= elem_cnt_next == DEPTH;
+            empty_o      <= elem_cnt_next == '0;
+            almost_empty <= elem_cnt_next == W_CNT'(1);
         end
     end
 
