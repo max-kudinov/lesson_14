@@ -44,7 +44,6 @@ module fifo_dualport #(
     logic             bypass_valid;
     logic [WIDTH-1:0] bypass_data;
     logic             almost_empty;
-    logic [W_PTR-1:0] prefetch_ptr;
 
     // ------------------------------------------------------------------------
     // SRAM
@@ -64,7 +63,7 @@ module fifo_dualport #(
         .wen_i   ( wen          ),
         .ren_i   ( ren          ),
         .waddr_i ( wr_ptr       ),
-        .raddr_i ( prefetch_ptr ),
+        .raddr_i ( rd_ptr       ),
         .data_i  ( data_i       ),
         .data_o  ( sram_out     )
     );
@@ -72,10 +71,6 @@ module fifo_dualport #(
     // ------------------------------------------------------------------------
     // Prefetch and bypass logic
     // ------------------------------------------------------------------------
-
-    // Fetch next element on read, that way it would appear on output before
-    // read enable signal (show-ahead)
-    assign prefetch_ptr = (rd_ptr == MAX_PTR) ? '0 : W_PTR'(rd_ptr + 1'b1);
 
     // Write to bypass register if the FIFO is empty or it has only 1 element
     // (almost empty) and we do push and pop simultaneously (basically
@@ -118,7 +113,7 @@ module fifo_dualport #(
 
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
-            rd_ptr <= '0;
+            rd_ptr <= W_PTR'(1);
         end else if (pop) begin
             rd_ptr <= (rd_ptr == MAX_PTR) ? '0 : rd_ptr + 1'b1;
         end
